@@ -1,0 +1,158 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "instanceName": {
+            "type": "string"
+        },
+        "plexClaim": {
+            "type": "securestring"
+        }
+    },
+    "variables": {
+        "cliGroupName": "[concat( parameters('instanceName') ,'-createshare-containerinstance')]",
+        "cliImage": "microsoft/azure-cli",
+        "cliName": "[concat( parameters('instanceName') ,'-createshare')]",
+        "configShareName": "database",
+        "cpuCores": "1.0",
+        "mediaShareName": "plex",
+        "plexGroupName": "[concat( parameters('instanceName') ,'-plex-containerinstance')]",
+        "plexImage": "plexinc/pms-docker",
+        "plexName": "[concat( parameters('instanceName') ,'-plex')]",
+        "memoryInGb": "1.0",
+        "storageAccountName": "[concat( 'plex' , parameters( 'instanceName'))]",
+        "timeZone": "America/Chicago"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "[variables('storageAccountName')]",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2017-10-01",
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "kind": "Storage",
+            "properties": {}
+        },
+        {
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "name": "[variables('cliGroupName')]",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2018-10-01",
+            "dependsOn": [
+                "[concat('Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]"
+            ],
+            "properties": {
+                "containers": [
+                    {
+                        "name": "[variables('cliName')]",
+                        "properties": {
+                            "image": "[variables('cliImage')]",
+                            "command": [
+                                "az",
+                                "storage",
+                                "share",
+                                "create",
+                                "--name",
+                                "[variables('mediaShareName')]"
+                            ],
+                            "environmentVariables": [
+                                {
+                                    "name": "AZURE_STORAGE_KEY",
+                                    "value": "[listKeys(variables('storageAccountName'),'2017-10-01').keys[0].value]"
+                                },
+                                {
+                                    "name": "AZURE_STORAGE_ACCOUNT",
+                                    "value": "[variables('storageAccountName')]"
+                                }
+                            ],
+                            "resources": {
+                                "requests": {
+                                    "cpu": "1.0",
+                                    "memoryInGb": "1.5"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "restartPolicy": "OnFailure",
+                "osType": "Linux"
+            }
+        },
+        {
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "name": "[variables('plexGroupName')]",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2018-10-01",
+            "dependsOn": [
+                "[concat('Microsoft.ContainerInstance/containerGroups/', variables('cliGroupName'))]"
+            ],
+            "properties": {
+                "volumes": [
+                    {
+                        "name": "media",
+                        "azureFile": {
+                            "shareName": "[variables('mediaShareName')]",
+                            "storageAccountName": "[variables('storageAccountName')]",
+                            "storageAccountKey": "[listKeys(variables('storageAccountName'),'2017-10-01').keys[0].value]"
+                        }
+                    },
+                    {
+                        "name": "config",
+                        "azureFile": {
+                            "shareName": "[variables('configShareName')]",
+                            "storageAccountName": "[variables('storageAccountName')]",
+                            "storageAccountKey": "[listKeys(variables('storageAccountName'),'2017-10-01').keys[0].value]"
+                        }
+                    },
+                    {
+                        "name": "transcode",
+                        "emptyDir": {}
+                    }
+                ],
+                "containers": [
+                    {
+                        "name": "[variables('plexName')]",
+                        "properties": {
+                            "image": "[variables('plexImage')]",
+                            "environmentVariables": [
+                                {
+                                    "name": "TZ",
+                                    "value": "[variables('timeZone')]"
+                                },
+                                {
+                                    "name": "PLEX_CLAIM",
+                                    "value": "[parameters('plexClaim')]"
+                                }
+                            ],
+                            "volumeMounts": [
+                                {
+                                    "name": "media",
+                                    "mountPath": "/data"
+                                },
+                                {
+                                    "name": "config",
+                                    "mountPath": "/config"
+                                },
+                                {
+                                    "name": "transcode",
+                                    "mountPath": "/transcode"
+                                }
+                            ],
+                            "resources": {
+                                "requests": {
+                                    "cpu": "[variables('cpuCores')]",
+                                    "memoryInGb": "[variables('memoryInGb')]"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "restartPolicy": "OnFailure",
+                "osType": "Linux"
+            }
+        }
+    ],
+    "outputs": {}
+}
